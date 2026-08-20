@@ -1,0 +1,53 @@
+# Example configuration for the OPC PLC Gateway.
+# Copy this file to gateway.yaml next to the .exe (or pass -config <path>)
+# and edit it for your factory's devices.
+
+server:
+  # Interface to bind the OPC UA endpoint to. 0.0.0.0 = all interfaces.
+  opcua_bind_addr: "0.0.0.0"
+  opcua_port: 4840
+
+devices:
+  # --- Rockwell / Allen-Bradley (ControlLogix, CompactLogix, Micro8xx) ---
+  - name: "Linha1_CompactLogix"
+    driver: "rockwell"
+    address: "192.168.1.10"
+    poll_interval_ms: 500
+    tags:
+      - name: "Velocidade"
+        address: "Program:MainProgram.Velocidade"
+      - name: "StatusMaquina"
+        address: "Program:MainProgram.Status"
+      - name: "ContadorPecas"
+        address: "Local:1:I.Data[0]"
+
+  # --- Siemens (S7-300/400/1200/1500) ---
+  # S7-1200/1500: the polled DBs must have "Optimized block access"
+  # UNCHECKED in TIA Portal, otherwise byte offsets are unstable.
+  - name: "Linha2_S71500"
+    driver: "siemens"
+    address: "192.168.1.20"
+    rack: 0
+    slot: 1
+    poll_interval_ms: 500
+    tags:
+      - name: "Temperatura"
+        address: "DB10,REAL0"
+      - name: "Pressao"
+        address: "DB10,REAL4"
+      - name: "EmFalha"
+        address: "DB10,X8.0"
+
+  # --- Any other brand that speaks Modbus TCP (Schneider, ABB, Omron,
+  #     Delta, WEG, most VFDs and remote I/O modules) ---
+  - name: "Linha3_ModbusGenerico"
+    driver: "modbus"
+    address: "192.168.1.30:502"
+    unit_id: 1
+    poll_interval_ms: 1000
+    tags:
+      - name: "NivelTanque"
+        address: "HR:100"
+        type: "float32"
+      - name: "BombaLigada"
+        address: "COIL:5"
