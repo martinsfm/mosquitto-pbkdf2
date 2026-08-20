@@ -15,12 +15,15 @@ it's a real, working foundation with:
 
 - A plugin-style driver architecture, so adding a new PLC brand is "write
   one package, add one import line," not a rewrite.
-- Two native drivers today: **Rockwell/Allen-Bradley** (EtherNet/IP CIP —
-  ControlLogix, CompactLogix, Micro8xx) and **Siemens** (S7 protocol —
-  S7-300/400/1200/1500).
+- Three native drivers today: **Rockwell/Allen-Bradley** (EtherNet/IP CIP —
+  ControlLogix, CompactLogix, Micro8xx), **Siemens** (S7 protocol —
+  S7-300/400/1200/1500), and **Mitsubishi Electric** (MC Protocol/SLMP —
+  Q/L/iQ-R series).
 - One universal fallback driver: **Modbus TCP**, which covers most other
-  big brands (Schneider, ABB, Omron, Delta, WEG, most VFDs and remote I/O)
-  since virtually all of them expose it natively or via a gateway module.
+  big brands (Schneider, ABB, Omron, Danfoss, Emerson, Honeywell,
+  Yokogawa, Yaskawa, SEW, Delta, WEG, most VFDs and remote I/O) since
+  virtually all of them expose it natively or via a gateway module. See
+  `CHANGELOG.md` for the full brand-by-brand coverage table.
 - A real OPC UA server (`gopcua/server`) exposing every tag live, so any
   standard OPC UA client — SCADA, historian, MES, another Ignition/Kepware
   instance — can browse and subscribe to it.
@@ -28,20 +31,22 @@ it's a real, working foundation with:
 What it does **not** have yet, and would need before it's a serious Kepware
 competitor: OPC UA security (certificates/encryption — it currently runs
 `MessageSecurityModeNone`), tag-level write support back to the PLCs,
-redundancy/failover, a management UI (today it's YAML + logs), and native
-drivers for Mitsubishi/Omron/Beckhoff proprietary protocols (they currently
-fall back to Modbus TCP if the device supports it). Treat this as the
-architecture and the first two brands done properly — extend from here.
+redundancy/failover, a management UI (today it's YAML + logs), and a native
+driver for Omron's NJ/NX EtherNet/IP (CIP) family or Beckhoff's ADS
+protocol (they currently fall back to Modbus TCP if the device supports
+it — see `CHANGELOG.md` for the full brand coverage table). Treat this as
+the architecture and the first three brands done properly — extend from
+here.
 
 ## Architecture
 
 ```
-        ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
-        │  rockwell   │   │  siemens    │   │  modbus     │   ← southbound drivers
-        │ (gologix)   │   │ (gos7)      │   │ (goburrow)  │     (add more here)
-        └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
-               │  poll loop, one goroutine per configured device
-               ▼                 ▼                 ▼
+   ┌───────────┐ ┌───────────┐ ┌─────────────┐ ┌───────────┐
+   │ rockwell  │ │ siemens   │ │ mitsubishi  │ │  modbus   │  ← southbound drivers
+   │(gologix)  │ │ (gos7)    │ │(go-mcprotocol)│ (goburrow)│    (add more here)
+   └─────┬─────┘ └─────┬─────┘ └──────┬──────┘ └─────┬─────┘
+         │  poll loop, one goroutine per configured device
+         ▼             ▼              ▼              ▼
         ┌─────────────────────────────────────────────────┐
         │                   tagstore                        │  in-memory,
         │      "<device>.<tag>" -> {value, quality, ts}      │  thread-safe

@@ -38,6 +38,18 @@ devices:
       - name: "EmFalha"
         address: "DB10,X8.0"
 
+  # --- Mitsubishi Electric (Q/L/iQ-R series with an Ethernet port) ---
+  - name: "Linha4_MitsubishiQ"
+    driver: "mitsubishi"
+    address: "192.168.1.40:5007" # MC protocol port set in GX Works
+    poll_interval_ms: 500
+    tags:
+      - name: "Temperatura"
+        address: "D100"
+        type: "float32"
+      - name: "EmFalha"
+        address: "M20"
+
   # --- Any other brand that speaks Modbus TCP (Schneider, ABB, Omron,
   #     Delta, WEG, most VFDs and remote I/O modules) ---
   - name: "Linha3_ModbusGenerico"

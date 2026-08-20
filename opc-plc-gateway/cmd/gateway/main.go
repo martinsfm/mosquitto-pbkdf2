@@ -22,6 +22,7 @@ import (
 	// driver registry on init(). Adding support for a new PLC brand means
 	// writing a new package under internal/driver/<brand> and adding one
 	// import line here - nothing else in the gateway changes.
+	_ "opc-plc-gateway/internal/driver/mitsubishi"
 	_ "opc-plc-gateway/internal/driver/modbus"
 	_ "opc-plc-gateway/internal/driver/rockwell"
 	_ "opc-plc-gateway/internal/driver/siemens"

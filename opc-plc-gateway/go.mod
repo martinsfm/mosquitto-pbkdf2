@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/danomagnum/gologix v0.41.0-beta
+	github.com/future-architect/go-mcprotocol v0.0.0-20210518065132-abfb4ef2fb9b
 	github.com/goburrow/modbus v0.1.0
 	github.com/gopcua/opcua v0.9.1
 	github.com/robinson/gos7 v0.0.0-20260622162611-2d6806f80c8b
