@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OPC PLC Gateway — Login</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .login-box {
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 32px; width: 320px;
+  }
+  .login-box .brand { justify-content: center; margin-bottom: 22px; }
+  .login-box label { margin-bottom: 16px; }
+  .login-box button { width: 100%; margin-top: 6px; }
+  .login-error { color: var(--bad); font-size: 13px; min-height: 18px; margin-top: 10px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="login-box">
+  <div class="brand">
+    <span class="brand-dot"></span>
+    <span class="brand-name">OPC PLC Gateway</span>
+  </div>
+  <label>Senha do painel
+    <input type="password" id="password" autofocus>
+  </label>
+  <button class="btn btn-primary" id="btnLogin">Entrar</button>
+  <div class="login-error" id="loginError"></div>
+</div>
+<script>
+async function doLogin() {
+  const password = document.getElementById("password").value;
+  const errEl = document.getElementById("loginError");
+  errEl.textContent = "";
+  try {
+    const res = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      const params = new URLSearchParams(location.search);
+      location.href = params.get("next") || "/";
+    } else {
+      errEl.textContent = data.error || "Senha incorreta.";
+    }
+  } catch (e) {
+    errEl.textContent = "Erro ao entrar: " + e.message;
+  }
+}
+document.getElementById("btnLogin").addEventListener("click", doLogin);
+document.getElementById("password").addEventListener("keydown", (ev) => { if (ev.key === "Enter") doLogin(); });
+
+// If no password is configured, or this browser already has a valid
+// session, skip the login screen entirely.
+fetch("/api/session").then((r) => r.json()).then((s) => {
+  if (!s.auth_required || s.authenticated) {
+    const params = new URLSearchParams(location.search);
+    location.href = params.get("next") || "/";
+  }
+});
+</script>
+</body>
+</html>

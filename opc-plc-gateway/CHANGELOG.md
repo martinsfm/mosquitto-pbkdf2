@@ -165,6 +165,92 @@ cross-compile Windows (~12MB, ainda zero dependência) também.
 
 ---
 
+## 2026-08-20 — Escrita de tags + autenticação no dashboard
+
+**Pedido:** os dois itens do topo da lista de "próximos passos": escrita
+de tags de volta pro PLC, e autenticação no dashboard web.
+
+### Escrita de tags
+
+**O que foi criado:**
+- `internal/driver/driver.go` — nova interface opcional `Writer`
+  (`WriteTag(ctx, tagName, value) error`); um driver a implementa além de
+  `Driver` quando sabe escrever, os outros continuam só-leitura sem
+  precisar de nenhuma mudança.
+- `WriteTag` implementado nos quatro drivers, cada um usando a API de
+  escrita da própria biblioteca:
+  - **Rockwell** — `gologix.Client.Write(tag, valor)`.
+  - **Siemens** — `AGWriteDB`/`AGWriteMB` + `gos7.Helper.Set*At`; bit
+    (`X0.3`) é ler-modificar-escrever porque o S7 não tem "escrever 1 bit"
+    (lê o byte inteiro, altera o bit, escreve o byte de volta).
+  - **Mitsubishi** — `mcp.Client.Write` pra dispositivos de palavra
+    (D/W); dispositivos de bit (M/X/Y/L/F/V/B) **não são suportados**
+    porque a biblioteca `go-mcprotocol` não tem um comando de escrita de
+    bit.
+  - **Modbus** — `WriteSingleRegister`/`WriteMultipleRegisters` (HR) e
+    `WriteSingleCoil` (COIL); IR e DI são somente-leitura por definição
+    do próprio protocolo Modbus, escrever neles dá erro.
+- `internal/manager/coerce.go` — como o valor chega em JSON (sempre
+  `float64`/`bool`/`string`), esse arquivo converte pro tipo Go exato que
+  o driver espera (`int16`, `float32`, etc.), usando o campo `type` da
+  tag quando configurado, ou senão o tipo do último valor lido com
+  sucesso daquela tag (na prática, toda tag que aparece no dashboard já
+  foi lida antes de alguém tentar escrever nela).
+- `internal/manager/manager.go` — `Manager.WriteTag`; guardei a instância
+  do driver dentro de `runningDevice` (antes só existia dentro do
+  goroutine de poll) com um mutex que serializa leitura e escrita no
+  mesmo dispositivo, já que a conexão TCP não é segura pra uso
+  concorrente.
+- `internal/webui/webui.go` — `POST /api/devices/{name}/tags/{tag}/write`.
+- Dashboard: cada linha da tabela de tags ganhou um campo de valor +
+  botão "Escrever" (com Enter funcionando também), mostrando sucesso/erro
+  ali mesmo, na hora.
+
+**Limitação conhecida:** escrever por um cliente OPC UA (em vez de pelo
+dashboard) ainda **não funciona** — uma requisição de escrita OPC UA hoje
+só atualiza o valor guardado em memória daquele nó, sem repassar pro PLC
+de verdade (a biblioteca `gopcua/server` não expõe um gancho de escrita
+por padrão; dá pra resolver envolvendo o namespace, fica pro próximo
+passo). Por enquanto, escrever é uma funcionalidade do dashboard.
+
+### Autenticação no dashboard
+
+**O que foi criado:**
+- `internal/config/config.go` — `webui.password` (opcional, texto plano
+  no YAML, mesma filosofia da senha de projeto do Kepware) e
+  `WebUIConfig.IsLoopback()`.
+- `internal/webui/auth.go` — sessão simples: senha única comparada em
+  tempo constante (`crypto/subtle`), token de sessão aleatório de 32
+  bytes (`crypto/rand`) guardado num cookie `HttpOnly`, validade de 24h
+  deslizante (usar o painel renova a sessão sozinho). Sem senha
+  configurada, a autenticação fica completamente desligada — nada muda
+  pra quem já estava usando sem senha.
+- Rotas protegidas: tudo em `/api/*` (exceto `/api/session` e
+  `/api/login`) e `/events` (o streaming ao vivo) exigem sessão válida
+  quando há senha configurada; a página HTML em si não é bloqueada (não
+  tem nada sensível nela sozinha, só JS que vai falhar em buscar dados
+  sem estar logado).
+- `internal/webui/static/login.html` — tela de login própria, mesmo
+  visual do dashboard.
+- `cmd/gateway/main.go` — aviso no log na inicialização se
+  `webui.bind_addr` não for loopback (ou seja, acessível pela rede) e
+  não houver senha configurada.
+- `configs/gateway.example.yaml` — campo `password` documentado.
+
+**Validação feita:** testei de verdade o ciclo completo pela API — sem
+cookie dá 401, senha errada é rejeitada, senha certa grava o cookie e
+libera as rotas, logout revoga o cookie e volta a dar 401. Testei também
+o aviso de log aparecendo quando `bind_addr: 0.0.0.0` sem senha, e
+sumindo com `127.0.0.1`. Testei a escrita de tag ponta a ponta contra um
+servidor Modbus TCP fake que também escrevi pro teste (estendi o fake pra
+aceitar Write Single Register além de Read Holding Registers): escrevi
+9999 numa tag sem `type` configurado, e o próximo ciclo de poll já leu de
+volta o valor escrito (confirmando que a coerção de tipo por último valor
+conhecido funciona). `go build`/`vet`/`test` limpos e cross-compile
+Windows também.
+
+---
+
 ## Cobertura de marcas — estado atual
 
 | Marca | Como é coberta hoje | Observação |
@@ -187,18 +273,21 @@ cross-compile Windows (~12MB, ainda zero dependência) também.
 Em ordem de impacto prático:
 1. **Segurança OPC UA** — hoje roda sem autenticação/criptografia
    (`MessageSecurityModeNone`); ok atrás de firewall de fábrica, mas vale
-   endurecer antes de expor mais amplamente.
-2. **Autenticação no dashboard web** — hoje qualquer um que alcance
-   `webui.bind_addr:porta` mexe nos dispositivos, sem login. Fica seguro
-   por padrão (bind em `127.0.0.1`), mas se for exposto na rede da
-   fábrica (`0.0.0.0`) merece pelo menos uma senha simples.
-3. **Escrita de tags** — hoje o gateway só lê (monitoramento). Escrever
-   valores de volta no PLC via OPC UA (ou pelo próprio dashboard) ainda
-   não existe.
-4. **Driver EtherNet/IP nativo pra Omron NJ/NX** — mesma família de
+   endurecer antes de expor mais amplamente. A senha do dashboard (feita
+   nesta sessão) não cobre isso — protege só o painel web, não o
+   endpoint `opc.tcp://`.
+2. **Escrita de tags via OPC UA** — a escrita feita nesta sessão só
+   funciona pelo dashboard; um cliente OPC UA que escreve num nó hoje só
+   muda o valor em memória daquele nó, sem repassar pro PLC (precisa
+   envolver o namespace do `gopcua/server` pra interceptar o `Write` e
+   chamar `Manager.WriteTag`).
+3. **Driver EtherNet/IP nativo pra Omron NJ/NX** — mesma família de
    protocolo do Rockwell (CIP), mas com particularidades próprias da Omron.
-5. **Remoção de nó OPC UA em tempo real** — hoje remover um dispositivo/tag
+4. **Remoção de nó OPC UA em tempo real** — hoje remover um dispositivo/tag
    pelo dashboard marca a tag como qualidade ruim, mas o nó some do
    namespace OPC UA só no próximo restart (limitação da biblioteca usada,
    ver changelog acima).
-6. **Redundância/failover**.
+5. **Redundância/failover**.
+6. **Contas de usuário** no dashboard — hoje é uma senha única
+   compartilhada (sem usuário, sem log de quem mudou o quê); suficiente
+   pra uma fábrica pequena, mas não escala pra um time grande.

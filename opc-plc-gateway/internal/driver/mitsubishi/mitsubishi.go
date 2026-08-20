@@ -177,6 +177,77 @@ func decodeWord(dtype string, payload []byte) (interface{}, error) {
 	return int16(binary.LittleEndian.Uint16(payload)), nil
 }
 
+// WriteTag writes value to the word device named by tagName (D or W only -
+// the underlying go-mcprotocol library has no bit-write primitive, so
+// M/X/Y/L/F/V/B tags can't be written; WriteTag returns an error for
+// those). value must already be the Go type the tag's Type expects
+// (int16/uint16/int32/float32) - the caller (internal/manager) is
+// responsible for coercing whatever came in over the dashboard/API.
+func (d *Driver) WriteTag(ctx context.Context, tagName string, value interface{}) error {
+	if d.client == nil {
+		if err := d.Connect(ctx); err != nil {
+			return err
+		}
+	}
+	a, ok := d.addrs[tagName]
+	if !ok {
+		return fmt.Errorf("tag %q não está configurada neste dispositivo", tagName)
+	}
+	if a.isBit {
+		return fmt.Errorf("escrita em dispositivo de bit (%s) não é suportada por este driver ainda", a.device)
+	}
+
+	buf, err := encodeWord(a.dtype, value)
+	if err != nil {
+		return fmt.Errorf("mitsubishi %s: write %s: %w", d.cfg.Name, tagName, err)
+	}
+	points := int64(1)
+	if a.regCount() == 2 {
+		points = 2
+	}
+	if _, err := d.client.Write(a.device, a.offset, points, buf); err != nil {
+		return fmt.Errorf("mitsubishi %s: write %s: %w", d.cfg.Name, tagName, err)
+	}
+	return nil
+}
+
+func encodeWord(dtype string, value interface{}) ([]byte, error) {
+	switch dtype {
+	case typeUint16:
+		v, ok := value.(uint16)
+		if !ok {
+			return nil, fmt.Errorf("valor %v não é uint16", value)
+		}
+		buf := make([]byte, 2)
+		binary.LittleEndian.PutUint16(buf, v)
+		return buf, nil
+	case typeInt32:
+		v, ok := value.(int32)
+		if !ok {
+			return nil, fmt.Errorf("valor %v não é int32", value)
+		}
+		buf := make([]byte, 4)
+		binary.LittleEndian.PutUint32(buf, uint32(v))
+		return buf, nil
+	case typeFloat32:
+		v, ok := value.(float32)
+		if !ok {
+			return nil, fmt.Errorf("valor %v não é float32", value)
+		}
+		buf := make([]byte, 4)
+		binary.LittleEndian.PutUint32(buf, math.Float32bits(v))
+		return buf, nil
+	default: // typeInt16
+		v, ok := value.(int16)
+		if !ok {
+			return nil, fmt.Errorf("valor %v não é int16", value)
+		}
+		buf := make([]byte, 2)
+		binary.LittleEndian.PutUint16(buf, uint16(v))
+		return buf, nil
+	}
+}
+
 func (d *Driver) Close() error {
 	d.client = nil
 	return nil

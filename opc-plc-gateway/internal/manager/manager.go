@@ -52,6 +52,14 @@ type runningDevice struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
+	// driverMu serializes every call into d: the poll loop's periodic
+	// Poll and a dashboard-triggered WriteTag share the same underlying
+	// connection (TCP socket, sequence counters, ...) and most driver
+	// libraries are not safe for concurrent use, so only one call into d
+	// happens at a time.
+	driverMu sync.Mutex
+	d        driver.Driver
+
 	mu        sync.RWMutex
 	connected bool
 	lastErr   string
@@ -129,6 +137,9 @@ func (m *Manager) pollLoop(ctx context.Context, rd *runningDevice) {
 		rd.setError(err)
 		return
 	}
+	rd.driverMu.Lock()
+	rd.d = d
+	rd.driverMu.Unlock()
 	defer d.Close()
 
 	if err := d.Connect(ctx); err != nil {
@@ -150,7 +161,9 @@ func (m *Manager) pollLoop(ctx context.Context, rd *runningDevice) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			rd.driverMu.Lock()
 			values, err := d.Poll(ctx)
+			rd.driverMu.Unlock()
 			now := time.Now()
 			for name, val := range values {
 				m.store.Set(tagstore.Key(cfg.Name, name), tagstore.Value{
@@ -495,6 +508,55 @@ func (m *Manager) TestRead(ctx context.Context, dev config.DeviceConfig, tag con
 		return nil, fmt.Errorf("PLC não retornou valor para esta tag")
 	}
 	return val, nil
+}
+
+// WriteTag writes value to a tag on a running device, coercing it to
+// match the tag's known Go type first (from its configured Type, falling
+// back to whatever type its last successfully read value had) so the
+// driver receives e.g. a real int16 instead of the float64 every number
+// decodes to when it arrives as JSON. Returns an error if the device
+// isn't running, the driver doesn't support writing at all (does not
+// implement driver.Writer), or the specific tag/value combination is
+// rejected by the driver (wrong type, read-only register, unknown tag).
+func (m *Manager) WriteTag(ctx context.Context, deviceName, tagName string, value interface{}) error {
+	m.mu.Lock()
+	rd, ok := m.running[deviceName]
+	var tagCfg *config.TagConfig
+	for _, d := range m.cfg.Devices {
+		if d.Name != deviceName {
+			continue
+		}
+		for _, t := range d.Tags {
+			if t.Name == tagName {
+				tc := t
+				tagCfg = &tc
+			}
+		}
+	}
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("dispositivo %q não está rodando", deviceName)
+	}
+	if tagCfg == nil {
+		return fmt.Errorf("tag %q não encontrada em %q", tagName, deviceName)
+	}
+
+	existing, _ := m.store.Get(tagstore.Key(deviceName, tagName))
+	coerced, err := coerceValue(value, tagCfg.Type, existing.Value)
+	if err != nil {
+		return err
+	}
+
+	rd.driverMu.Lock()
+	defer rd.driverMu.Unlock()
+	if rd.d == nil {
+		return fmt.Errorf("dispositivo ainda conectando, tente novamente em instantes")
+	}
+	w, ok := rd.d.(driver.Writer)
+	if !ok {
+		return fmt.Errorf("driver %q ainda não suporta escrita de tags", rd.cfg.Driver)
+	}
+	return w.WriteTag(ctx, tagName, coerced)
 }
 
 // Shutdown stops every running poller. Called on gateway exit.

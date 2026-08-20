@@ -33,20 +33,32 @@ it's a real, working foundation with:
 - A **web dashboard** (`internal/webui`), embedded in the same `.exe`, with
   no separate install: add a device with a wizard that tests the connection
   before saving, add a tag with a one-click "test read" before committing
-  to it, watch every tag's live value update in real time, and a "find PLCs
-  on the network" button that scans for the well-known ports each brand
-  listens on. Changes made here take effect immediately (no restart) and
-  are written back to `gateway.yaml`, so the file and the dashboard are
-  always the same source of truth.
+  to it, watch every tag's live value update in real time, write a value
+  back to a tag right from its row, and a "find PLCs on the network"
+  button that scans for the well-known ports each brand listens on.
+  Changes made here take effect immediately (no restart) and are written
+  back to `gateway.yaml`, so the file and the dashboard are always the
+  same source of truth. An optional password (`webui.password`) gates the
+  whole dashboard behind a login when it's reachable from more than just
+  this machine.
+- **Tag write-back from the dashboard**: every driver (Rockwell, Siemens,
+  Mitsubishi, Modbus) implements `driver.Writer` — type a value into a
+  tag's row and click "Escrever" to push it straight to the PLC, not just
+  read it. A few narrow gaps are noted per-driver in the source (e.g.
+  Mitsubishi bit devices can't be written — the underlying library has no
+  bit-write primitive). This does **not** yet extend to OPC UA clients: an
+  OPC UA Write request against a node only updates that node's local
+  cached value, it does not reach the PLC (see `CHANGELOG.md`).
 
 What it does **not** have yet, and would need before it's a serious Kepware
 competitor: OPC UA security (certificates/encryption — it currently runs
-`MessageSecurityModeNone`), tag-level write support back to the PLCs,
-redundancy/failover, and a native driver for Omron's NJ/NX EtherNet/IP
-(CIP) family or Beckhoff's ADS protocol (they currently fall back to
-Modbus TCP if the device supports it — see `CHANGELOG.md` for the full
-brand coverage table). Treat this as the architecture, the first three
-brands, and the dashboard done properly — extend from here.
+`MessageSecurityModeNone`; the dashboard's own password is separate from
+this and doesn't cover the OPC UA endpoint itself), redundancy/failover,
+and a native driver for Omron's NJ/NX EtherNet/IP (CIP) family or
+Beckhoff's ADS protocol (they currently fall back to Modbus TCP if the
+device supports it — see `CHANGELOG.md` for the full brand coverage
+table). Treat this as the architecture, the first three brands, the
+dashboard, and tag writes done properly — extend from here.
 
 ## Architecture
 

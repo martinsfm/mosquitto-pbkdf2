@@ -156,6 +156,113 @@ func decode(dtype string, raw []byte) interface{} {
 	return binary.BigEndian.Uint16(raw)
 }
 
+// WriteTag writes value to the tag named by tagName. Only holding
+// registers (HR) and coils (COIL) are writable per the Modbus spec -
+// input registers (IR) and discrete inputs (DI) are read-only on the
+// device side, so WriteTag returns an error for those. value must
+// already be the Go type the tag's Type expects (bool for COIL;
+// uint16/int16/uint32/int32/float32/float32_swapped for HR) - the caller
+// (internal/manager) is responsible for coercing whatever came in over
+// the dashboard/API to match.
+func (d *Driver) WriteTag(ctx context.Context, tagName string, value interface{}) error {
+	if d.client == nil {
+		if err := d.Connect(ctx); err != nil {
+			return err
+		}
+	}
+	a, ok := d.addrs[tagName]
+	if !ok {
+		return fmt.Errorf("tag %q não está configurada neste dispositivo", tagName)
+	}
+	if err := d.writeOne(a, value); err != nil {
+		return fmt.Errorf("modbus %s: write %s: %w", d.cfg.Name, tagName, err)
+	}
+	return nil
+}
+
+func (d *Driver) writeOne(a address, value interface{}) error {
+	switch a.table {
+	case tableCoil:
+		b, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("valor %v não é booleano", value)
+		}
+		v := uint16(0x0000)
+		if b {
+			v = 0xFF00
+		}
+		_, err := d.client.WriteSingleCoil(a.reg, v)
+		return err
+	case tableHolding:
+		buf, err := encode(a.dtype, value)
+		if err != nil {
+			return err
+		}
+		if len(buf) == 2 {
+			_, err = d.client.WriteSingleRegister(a.reg, binary.BigEndian.Uint16(buf))
+		} else {
+			_, err = d.client.WriteMultipleRegisters(a.reg, uint16(len(buf)/2), buf)
+		}
+		return err
+	default:
+		return fmt.Errorf("registrador somente leitura (input register / discrete input)")
+	}
+}
+
+func encode(dtype string, value interface{}) ([]byte, error) {
+	switch dtype {
+	case typeUint16:
+		v, ok := value.(uint16)
+		if !ok {
+			return nil, fmt.Errorf("valor %v não é uint16", value)
+		}
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, v)
+		return buf, nil
+	case typeInt16:
+		v, ok := value.(int16)
+		if !ok {
+			return nil, fmt.Errorf("valor %v não é int16", value)
+		}
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, uint16(v))
+		return buf, nil
+	case typeUint32:
+		v, ok := value.(uint32)
+		if !ok {
+			return nil, fmt.Errorf("valor %v não é uint32", value)
+		}
+		buf := make([]byte, 4)
+		binary.BigEndian.PutUint32(buf, v)
+		return buf, nil
+	case typeInt32:
+		v, ok := value.(int32)
+		if !ok {
+			return nil, fmt.Errorf("valor %v não é int32", value)
+		}
+		buf := make([]byte, 4)
+		binary.BigEndian.PutUint32(buf, uint32(v))
+		return buf, nil
+	case typeFloat32:
+		v, ok := value.(float32)
+		if !ok {
+			return nil, fmt.Errorf("valor %v não é float32", value)
+		}
+		buf := make([]byte, 4)
+		binary.BigEndian.PutUint32(buf, math.Float32bits(v))
+		return buf, nil
+	case typeFloat32Swapped:
+		v, ok := value.(float32)
+		if !ok {
+			return nil, fmt.Errorf("valor %v não é float32", value)
+		}
+		buf := make([]byte, 4)
+		binary.BigEndian.PutUint32(buf, math.Float32bits(v))
+		return []byte{buf[2], buf[3], buf[0], buf[1]}, nil
+	}
+	return nil, fmt.Errorf("tipo %q desconhecido", dtype)
+}
+
 func (d *Driver) Close() error {
 	if d.handler == nil {
 		return nil

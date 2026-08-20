@@ -20,6 +20,24 @@ type WebUIConfig struct {
 	// when running as a Windows service, since services have no desktop
 	// to show a browser window on.
 	OpenBrowser *bool `yaml:"open_browser,omitempty"`
+	// Password, when set, requires a login on the dashboard (and its
+	// REST API / live-update stream) before any device, tag, or PLC
+	// value is reachable. Stored in plain text in gateway.yaml, same as
+	// Kepware's project password - this protects the dashboard from
+	// someone else on the network, not from someone with filesystem
+	// access to this machine. Never marshalled to JSON so no API
+	// response can ever echo it back.
+	Password string `yaml:"password,omitempty" json:"-"`
+}
+
+// IsLoopback reports whether the dashboard is only reachable from this
+// same machine - the safe-by-default binding that needs no password.
+func (w WebUIConfig) IsLoopback() bool {
+	switch w.BindAddr {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	}
+	return false
 }
 
 func (w WebUIConfig) ShouldOpenBrowser() bool {

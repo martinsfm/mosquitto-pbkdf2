@@ -144,6 +144,74 @@ func (d *Driver) readOne(a address) (interface{}, error) {
 	}
 }
 
+// WriteTag writes value to the tag named by tagName. value must already be
+// the Go type the tag's declared S7 type expects (int16 for INT, int32
+// for DINT, float32 for REAL, uint16/uint32 for WORD/DWORD, byte for
+// BYTE, bool for X.n) - the caller (internal/manager) is responsible for
+// coercing whatever came in over the dashboard/API to match.
+//
+// Writing a single bit (X.n) is a read-modify-write: S7 has no "write one
+// bit" primitive, so this reads the containing byte, flips the bit, and
+// writes the byte back - a write to another bit in that same byte
+// happening concurrently on the PLC from ladder logic could in principle
+// race with this, same as it would with any other S7 tool.
+func (d *Driver) WriteTag(ctx context.Context, tagName string, value interface{}) error {
+	if d.client == nil {
+		if err := d.Connect(ctx); err != nil {
+			return err
+		}
+	}
+	a, ok := d.addrs[tagName]
+	if !ok {
+		return fmt.Errorf("tag %q não está configurada neste dispositivo", tagName)
+	}
+	if err := d.writeOne(a, value); err != nil {
+		return fmt.Errorf("siemens %s: write %s (%s): %w", d.cfg.Name, tagName, tagName, err)
+	}
+	return nil
+}
+
+func (d *Driver) writeOne(a address, value interface{}) error {
+	buf := make([]byte, a.byteSize())
+
+	if a.dtype == typeBit {
+		if err := d.read(a, buf); err != nil {
+			return err
+		}
+		b, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("valor %v não é booleano", value)
+		}
+		buf[0] = d.helper.SetBoolAt(buf[0], uint(a.bitOffset), b)
+	} else if a.dtype == typeReal {
+		f, ok := value.(float32)
+		if !ok {
+			return fmt.Errorf("valor %v não é float32", value)
+		}
+		d.helper.SetRealAt(buf, 0, f)
+	} else {
+		d.helper.SetValueAt(buf, 0, value)
+	}
+
+	switch a.area {
+	case areaDB:
+		return d.client.AGWriteDB(a.db, a.byteOffset, len(buf), buf)
+	case areaMerker:
+		return d.client.AGWriteMB(a.byteOffset, len(buf), buf)
+	}
+	return fmt.Errorf("unsupported s7 area")
+}
+
+func (d *Driver) read(a address, buf []byte) error {
+	switch a.area {
+	case areaDB:
+		return d.client.AGReadDB(a.db, a.byteOffset, len(buf), buf)
+	case areaMerker:
+		return d.client.AGReadMB(a.byteOffset, len(buf), buf)
+	}
+	return fmt.Errorf("unsupported s7 area")
+}
+
 func (d *Driver) Close() error {
 	if d.handler == nil {
 		return nil

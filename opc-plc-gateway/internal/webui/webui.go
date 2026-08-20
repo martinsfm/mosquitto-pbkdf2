@@ -31,12 +31,13 @@ var staticFS embed.FS
 type Server struct {
 	mgr   *manager.Manager
 	store *tagstore.Store
+	auth  *auth
 	http  *http.Server
 }
 
 func New(cfg config.WebUIConfig, mgr *manager.Manager, store *tagstore.Store) *Server {
 	mux := http.NewServeMux()
-	s := &Server{mgr: mgr, store: store}
+	s := &Server{mgr: mgr, store: store, auth: newAuth(cfg.Password)}
 	s.routes(mux)
 
 	addr := fmt.Sprintf("%s:%d", cfg.BindAddr, cfg.Port)
@@ -80,18 +81,77 @@ func (s *Server) routes(mux *http.ServeMux) {
 	}
 	mux.Handle("GET /", http.FileServer(http.FS(sub)))
 
-	mux.HandleFunc("GET /api/drivers", s.handleDrivers)
-	mux.HandleFunc("GET /api/devices", s.handleListDevices)
-	mux.HandleFunc("POST /api/devices", s.handleAddDevice)
-	mux.HandleFunc("GET /api/devices/{name}", s.handleGetDevice)
-	mux.HandleFunc("DELETE /api/devices/{name}", s.handleRemoveDevice)
-	mux.HandleFunc("GET /api/devices/{name}/tags", s.handleListTags)
-	mux.HandleFunc("POST /api/devices/{name}/tags", s.handleAddTag)
-	mux.HandleFunc("DELETE /api/devices/{name}/tags/{tag}", s.handleRemoveTag)
-	mux.HandleFunc("POST /api/test-connection", s.handleTestConnection)
-	mux.HandleFunc("POST /api/test-read", s.handleTestRead)
-	mux.HandleFunc("GET /api/discover", s.handleDiscover)
-	mux.HandleFunc("GET /events", s.handleEvents)
+	// Login/session-check are never behind auth themselves (nothing to
+	// gate a login page with); everything that reads or touches a PLC
+	// is, via requireAuth - a no-op wrapper when no password is
+	// configured.
+	mux.HandleFunc("GET /api/session", s.handleSession)
+	mux.HandleFunc("POST /api/login", s.handleLogin)
+	mux.HandleFunc("POST /api/logout", s.handleLogout)
+
+	mux.HandleFunc("GET /api/drivers", s.requireAuth(s.handleDrivers))
+	mux.HandleFunc("GET /api/devices", s.requireAuth(s.handleListDevices))
+	mux.HandleFunc("POST /api/devices", s.requireAuth(s.handleAddDevice))
+	mux.HandleFunc("GET /api/devices/{name}", s.requireAuth(s.handleGetDevice))
+	mux.HandleFunc("DELETE /api/devices/{name}", s.requireAuth(s.handleRemoveDevice))
+	mux.HandleFunc("GET /api/devices/{name}/tags", s.requireAuth(s.handleListTags))
+	mux.HandleFunc("POST /api/devices/{name}/tags", s.requireAuth(s.handleAddTag))
+	mux.HandleFunc("DELETE /api/devices/{name}/tags/{tag}", s.requireAuth(s.handleRemoveTag))
+	mux.HandleFunc("POST /api/devices/{name}/tags/{tag}/write", s.requireAuth(s.handleWriteTag))
+	mux.HandleFunc("POST /api/test-connection", s.requireAuth(s.handleTestConnection))
+	mux.HandleFunc("POST /api/test-read", s.requireAuth(s.handleTestRead))
+	mux.HandleFunc("GET /api/discover", s.requireAuth(s.handleDiscover))
+	mux.HandleFunc("GET /events", s.requireAuth(s.handleEvents))
+}
+
+// --- auth handlers --------------------------------------------------------
+
+// handleSession tells the frontend, on load, whether a login is required
+// at all and whether the current cookie (if any) already satisfies it -
+// so the dashboard can decide in one round trip whether to show itself or
+// redirect to the login page.
+func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
+	authenticated := true
+	if s.auth.enabled() {
+		c, err := r.Cookie(sessionCookieName)
+		authenticated = err == nil && s.auth.validate(c.Value)
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"auth_required": s.auth.enabled(),
+		"authenticated": authenticated,
+	})
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.auth.enabled() {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+	var body struct {
+		Password string `json:"password"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	token, ok := s.auth.login(body.Password)
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": "senha incorreta"})
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookieName, Value: token, Path: "/",
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: int(sessionTTL.Seconds()),
+	})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(sessionCookieName); err == nil {
+		s.auth.logout(c.Value)
+	}
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // --- JSON helpers -------------------------------------------------------
@@ -243,6 +303,32 @@ func (s *Server) handleRemoveTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleWriteTag writes a value back to a tag's PLC address - the
+// dashboard's inline "escrever" control on a tag row. The body is a bare
+// JSON value ({"value": ...}) so numbers/booleans/strings round-trip
+// exactly as the browser's <input> produced them; internal/manager takes
+// care of turning that into the concrete Go type the driver expects.
+func (s *Server) handleWriteTag(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	tag := r.PathValue("tag")
+
+	var body struct {
+		Value interface{} `json:"value"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	if err := s.mgr.WriteTag(ctx, name, tag, body.Value); err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
 // --- testing (wizard "testar conexão" / "testar leitura") --------------

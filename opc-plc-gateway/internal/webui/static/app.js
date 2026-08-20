@@ -20,6 +20,10 @@ async function api(method, path, body) {
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
+  if (res.status === 401) {
+    location.href = "/login.html?next=" + encodeURIComponent(location.pathname);
+    throw new Error("sessão expirada");
+  }
   if (res.status === 204) return null;
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error((data && data.error) || res.statusText);
@@ -123,7 +127,7 @@ function renderDetail() {
 
   const table = el("table", "tag-table");
   const thead = el("thead");
-  thead.innerHTML = "<tr><th>Tag</th><th>Endereço</th><th>Valor</th><th>Qualidade</th><th>Atualizado</th><th></th></tr>";
+  thead.innerHTML = "<tr><th>Tag</th><th>Endereço</th><th>Valor</th><th>Qualidade</th><th>Atualizado</th><th>Escrever</th><th></th></tr>";
   table.appendChild(thead);
   const tbody = el("tbody");
   tbody.id = "tagTableBody";
@@ -156,6 +160,23 @@ function renderTagRow(t) {
   const tsTd = el("td", null, fmtTime(t.timestamp));
   tsTd.dataset.role = "timestamp";
   tr.appendChild(tsTd);
+
+  const writeTd = el("td");
+  const writeRow = el("div", "write-row");
+  const writeInput = el("input");
+  writeInput.type = "text";
+  writeInput.className = "write-input";
+  writeInput.placeholder = fmtValue(t.value);
+  const writeBtn = el("button", "btn btn-small btn-ghost", "Escrever");
+  const writeMsg = el("span", "write-msg");
+  writeBtn.addEventListener("click", () => writeTag(currentDevice, t.name, writeInput, writeMsg));
+  writeInput.addEventListener("keydown", (ev) => { if (ev.key === "Enter") writeTag(currentDevice, t.name, writeInput, writeMsg); });
+  writeRow.appendChild(writeInput);
+  writeRow.appendChild(writeBtn);
+  writeTd.appendChild(writeRow);
+  writeTd.appendChild(writeMsg);
+  tr.appendChild(writeTd);
+
   const rmTd = el("td");
   const rmBtn = el("button", "remove-x", "✕");
   rmBtn.title = "Remover tag";
@@ -169,6 +190,36 @@ function qualityLabel(q) {
   if (q === "good") return "boa";
   if (q === "bad") return "ruim";
   return "obsoleta";
+}
+
+function parseInputValue(raw) {
+  const trimmed = raw.trim();
+  if (trimmed === "true") return true;
+  if (trimmed === "false") return false;
+  if (trimmed !== "" && !isNaN(trimmed)) return Number(trimmed);
+  return trimmed;
+}
+
+async function writeTag(deviceName, tagName, inputEl, msgEl) {
+  const raw = inputEl.value;
+  if (raw.trim() === "") { setInlineResult(msgEl, false, "Digite um valor."); return; }
+  setInlineResult(msgEl, null, "Escrevendo…");
+  try {
+    const res = await api("POST", `/api/devices/${encodeURIComponent(deviceName)}/tags/${encodeURIComponent(tagName)}/write`, { value: parseInputValue(raw) });
+    if (res.ok) {
+      setInlineResult(msgEl, true, "OK");
+      inputEl.value = "";
+    } else {
+      setInlineResult(msgEl, false, res.error);
+    }
+  } catch (e) {
+    setInlineResult(msgEl, false, e.message);
+  }
+}
+
+function setInlineResult(el, ok, msg) {
+  el.textContent = msg;
+  el.className = "write-msg" + (ok === true ? " test-ok" : ok === false ? " test-fail" : "");
 }
 
 async function removeDevice(name) {
@@ -423,6 +474,20 @@ function patchTagRow(t) {
 
 // ---- wiring -----------------------------------------------------------
 async function init() {
+  const session = await fetch("/api/session").then((r) => r.json());
+  if (session.auth_required && !session.authenticated) {
+    location.href = "/login.html?next=" + encodeURIComponent(location.pathname);
+    return;
+  }
+  if (session.auth_required) {
+    const logoutBtn = el("button", "btn btn-ghost", "Sair");
+    logoutBtn.addEventListener("click", async () => {
+      await fetch("/api/logout", { method: "POST" });
+      location.href = "/login.html";
+    });
+    $("summary").insertAdjacentElement("afterend", logoutBtn);
+  }
+
   drivers = await api("GET", "/api/drivers");
   populateDriverSelect();
   $("fDriver").addEventListener("change", renderDriverFields);

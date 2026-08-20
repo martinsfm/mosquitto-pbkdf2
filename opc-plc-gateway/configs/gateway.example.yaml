@@ -23,6 +23,11 @@ webui:
   bind_addr: "127.0.0.1"
   port: 8080
   # open_browser: false   # uncomment to stop the .exe from auto-opening a browser tab
+  # password: "troque-isto"   # required (the gateway warns in the log if you skip it)
+  #                             once bind_addr is not 127.0.0.1 - anyone who can
+  #                             reach the dashboard can add/remove devices and
+  #                             write tags without one. Plain text here, same as
+  #                             Kepware's own project password.
 
 devices:
   # --- Rockwell / Allen-Bradley (ControlLogix, CompactLogix, Micro8xx) ---

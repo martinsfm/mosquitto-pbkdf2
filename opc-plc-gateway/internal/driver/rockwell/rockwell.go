@@ -70,6 +70,37 @@ func (d *Driver) Poll(ctx context.Context) (map[string]interface{}, error) {
 	return results, nil
 }
 
+// WriteTag writes value to the controller tag named by tagName (must be
+// one of this device's configured tags - the gateway only ever writes
+// tags it already knows about, never an arbitrary controller address).
+// value must already be the Go type the tag expects (int16/int32/float32/
+// bool/string, ...); the caller (internal/manager) is responsible for
+// coercing whatever came in over the dashboard/API to match.
+func (d *Driver) WriteTag(ctx context.Context, tagName string, value interface{}) error {
+	if d.client == nil || !d.client.Connected() {
+		if err := d.Connect(ctx); err != nil {
+			return err
+		}
+	}
+	addr, ok := d.addressForTag(tagName)
+	if !ok {
+		return fmt.Errorf("tag %q não está configurada neste dispositivo", tagName)
+	}
+	if err := d.client.Write(addr, value); err != nil {
+		return fmt.Errorf("rockwell %s: write %s: %w", d.cfg.Name, addr, err)
+	}
+	return nil
+}
+
+func (d *Driver) addressForTag(tagName string) (string, bool) {
+	for _, t := range d.cfg.Tags {
+		if t.Name == tagName {
+			return t.Address, true
+		}
+	}
+	return "", false
+}
+
 func (d *Driver) Close() error {
 	if d.client == nil {
 		return nil

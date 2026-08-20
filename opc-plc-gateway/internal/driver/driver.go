@@ -32,6 +32,15 @@ type Driver interface {
 	Close() error
 }
 
+// Writer is an optional capability: drivers that support writing a value
+// back to the PLC implement it in addition to Driver. Not every driver (or
+// every tag on a driver that does support it - e.g. Mitsubishi bit
+// devices) can write; WriteTag returns an error for those, the same way
+// Poll would fail to read an invalid tag.
+type Writer interface {
+	WriteTag(ctx context.Context, tagName string, value interface{}) error
+}
+
 // Factory builds a Driver for the given device configuration.
 type Factory func(cfg config.DeviceConfig) (Driver, error)
 

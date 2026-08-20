@@ -56,6 +56,9 @@ func run(ctx context.Context, configPath string, openBrowser bool) error {
 		return err
 	}
 	log.Printf("gateway: loaded %d device(s) from %s", len(cfg.Devices), configPath)
+	if !cfg.WebUI.IsLoopback() && cfg.WebUI.Password == "" {
+		log.Printf("gateway: WARNING - dashboard is bound to %s (reachable from the network) with no password set. Set webui.password in %s.", cfg.WebUI.BindAddr, configPath)
+	}
 
 	store := tagstore.New()
 	uaSrv := opcuaserver.New(cfg.Server, cfg.Devices, store)
