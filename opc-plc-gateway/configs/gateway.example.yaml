@@ -1,11 +1,28 @@
 # Example configuration for the OPC PLC Gateway.
 # Copy this file to gateway.yaml next to the .exe (or pass -config <path>)
 # and edit it for your factory's devices.
+#
+# You don't have to hand-edit this file: the built-in web dashboard
+# (http://127.0.0.1:8080 by default, opens automatically when you run the
+# .exe) can add/remove devices and tags for you and writes the result back
+# here. This file is shown as a reference for what the dashboard produces,
+# and as a starting point if you'd rather script your device list.
+# gateway.yaml can even start as just `devices: []` and be built up
+# entirely from the dashboard.
 
 server:
   # Interface to bind the OPC UA endpoint to. 0.0.0.0 = all interfaces.
   opcua_bind_addr: "0.0.0.0"
   opcua_port: 4840
+
+webui:
+  # The dashboard binds to localhost only by default - safe out of the
+  # box. Set to "0.0.0.0" to reach it from other machines on the factory
+  # LAN (e.g. a supervisor's desk), same as you would with Kepware's
+  # configuration tool.
+  bind_addr: "127.0.0.1"
+  port: 8080
+  # open_browser: false   # uncomment to stop the .exe from auto-opening a browser tab
 
 devices:
   # --- Rockwell / Allen-Bradley (ControlLogix, CompactLogix, Micro8xx) ---

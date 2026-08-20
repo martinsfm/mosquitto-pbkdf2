@@ -4,7 +4,10 @@ A from-scratch OPC UA server that polls PLCs from multiple brands and
 republishes their tags as a standard OPC UA address space — the same role
 KEPServerEX, Ignition, or FactoryTalk Linx Gateway play in a factory, built
 here as a single dependency-free Windows executable instead of a licensed
-product.
+product. It ships with a **local web dashboard** so day-to-day use (add a
+PLC, add a tag, watch live values, find PLCs on the network) never requires
+opening the YAML config file — the thing people usually complain is
+Kepware's biggest weak point.
 
 ## Honest scope
 
@@ -27,16 +30,23 @@ it's a real, working foundation with:
 - A real OPC UA server (`gopcua/server`) exposing every tag live, so any
   standard OPC UA client — SCADA, historian, MES, another Ignition/Kepware
   instance — can browse and subscribe to it.
+- A **web dashboard** (`internal/webui`), embedded in the same `.exe`, with
+  no separate install: add a device with a wizard that tests the connection
+  before saving, add a tag with a one-click "test read" before committing
+  to it, watch every tag's live value update in real time, and a "find PLCs
+  on the network" button that scans for the well-known ports each brand
+  listens on. Changes made here take effect immediately (no restart) and
+  are written back to `gateway.yaml`, so the file and the dashboard are
+  always the same source of truth.
 
 What it does **not** have yet, and would need before it's a serious Kepware
 competitor: OPC UA security (certificates/encryption — it currently runs
 `MessageSecurityModeNone`), tag-level write support back to the PLCs,
-redundancy/failover, a management UI (today it's YAML + logs), and a native
-driver for Omron's NJ/NX EtherNet/IP (CIP) family or Beckhoff's ADS
-protocol (they currently fall back to Modbus TCP if the device supports
-it — see `CHANGELOG.md` for the full brand coverage table). Treat this as
-the architecture and the first three brands done properly — extend from
-here.
+redundancy/failover, and a native driver for Omron's NJ/NX EtherNet/IP
+(CIP) family or Beckhoff's ADS protocol (they currently fall back to
+Modbus TCP if the device supports it — see `CHANGELOG.md` for the full
+brand coverage table). Treat this as the architecture, the first three
+brands, and the dashboard done properly — extend from here.
 
 ## Architecture
 
@@ -45,26 +55,29 @@ here.
    │ rockwell  │ │ siemens   │ │ mitsubishi  │ │  modbus   │  ← southbound drivers
    │(gologix)  │ │ (gos7)    │ │(go-mcprotocol)│ (goburrow)│    (add more here)
    └─────┬─────┘ └─────┬─────┘ └──────┬──────┘ └─────┬─────┘
-         │  poll loop, one goroutine per configured device
+         │  poll loop, one goroutine per device (internal/manager)
          ▼             ▼              ▼              ▼
         ┌─────────────────────────────────────────────────┐
         │                   tagstore                        │  in-memory,
         │      "<device>.<tag>" -> {value, quality, ts}      │  thread-safe
         └───────────────────────┬─────────────────────────┘
-                                 ▼
-                         ┌───────────────┐
-                         │  opcuaserver   │   OPC UA server (gopcua/server)
-                         │ (gopcua/server)│   opc.tcp://<host>:4840
-                         └───────────────┘
-                                 ▲
-                                 │
-                    any OPC UA client (SCADA, historian, MES, ...)
+                    ▼                                ▼
+            ┌───────────────┐               ┌──────────────────┐
+            │  opcuaserver   │               │      webui        │
+            │ (gopcua/server)│               │ REST API + SSE +  │
+            │ opc.tcp://:4840│               │ embedded dashboard │
+            └───────┬────────┘               │  http://:8080      │
+                    ▲                        └─────────┬──────────┘
+                    │                                   ▲
+       any OPC UA client (SCADA, historian, MES, ...)    │ your browser
 ```
 
-Each device in `gateway.yaml` gets its own polling goroutine talking to one
-driver instance; a failed poll marks that device's tags stale (quality
-`Bad`) instead of crashing the gateway, and the next tick reconnects
-automatically.
+`internal/manager` owns the live device list: each device gets its own
+polling goroutine talking to one driver instance; a failed poll marks that
+device's tags stale (quality `Bad`) instead of crashing the gateway, and
+the next tick reconnects automatically. Adding/removing a device or tag
+through the dashboard goes through the manager too, so both the OPC UA
+address space and the tag store stay in sync immediately — no restart.
 
 ### Adding a new PLC brand
 
@@ -100,13 +113,28 @@ gateway.exe -config gateway.yaml
 ```
 
 Copy `configs/gateway.example.yaml` to `gateway.yaml` next to the `.exe`
-and edit the `devices:` list — see the comments in that file for the
-address syntax of each driver (Rockwell tag names, Siemens `DB10,REAL0`
-style addresses, Modbus `HR:100` style addresses).
+first (it can start with an empty `devices: []` — you can add everything
+from the dashboard instead of editing YAML).
+
+Double-clicking the `.exe` (or running it from a terminal) opens your
+default browser at **http://127.0.0.1:8080** automatically — that's the
+dashboard: click **+ Adicionar dispositivo**, pick the brand, type the
+PLC's IP, hit **Testar conexão** to confirm it actually answers before
+saving, then **+ Adicionar tag** the same way (with a **Testar leitura**
+button so a wrong address shows up immediately, not after you've walked
+away). Don't know a PLC's IP? **Procurar PLCs na rede** scans the local
+subnet for the ports each supported brand listens on. Pass `-no-browser`
+to skip the auto-open (e.g. running under a task scheduler); the dashboard
+keeps running either way. See the comments in `gateway.example.yaml` if
+you'd rather script the device list directly — same address syntax the
+dashboard's help text shows per brand (Rockwell tag names, Siemens
+`DB10,REAL0`, Mitsubishi `D100`, Modbus `HR:100`).
 
 Point any OPC UA client at `opc.tcp://<this-machine>:4840` (no auth, no
 encryption by default — put it behind your network's normal firewalling
-until OPC UA security is added).
+until OPC UA security is added). The dashboard itself binds to
+`127.0.0.1` only by default; set `webui.bind_addr: "0.0.0.0"` in the
+config to reach it from other machines on the factory LAN.
 
 ## Install as a Windows Service (background, auto-start, no installer)
 
@@ -130,11 +158,14 @@ To remove: `sc stop OpcPlcGateway && sc delete OpcPlcGateway`.
 ## Repo layout
 
 ```
-cmd/gateway/            entrypoint, Windows service wiring, poll orchestration
-internal/config/        YAML config loading
+cmd/gateway/            entrypoint, Windows service wiring, browser auto-open
+internal/config/        YAML config loading + saving
+internal/manager/       live device/tag lifecycle (add/remove, polling, test connect/read)
 internal/tagstore/      thread-safe shared tag value store
 internal/driver/        driver.Driver interface + registry, one subpackage per brand
 internal/opcuaserver/   OPC UA server wiring tagstore -> address space
+internal/webui/         embedded dashboard: REST API, SSE live updates, static HTML/CSS/JS
+internal/discover/      network port scanner behind the dashboard's "find PLCs" button
 configs/                example gateway.yaml
 build/                  cross-compile script, build output (gitignored)
 ```

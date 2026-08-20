@@ -96,6 +96,75 @@ cross-compile Windows, todos limpos.
 
 ---
 
+## 2026-08-20 — Dashboard web (interface bonita e fácil de usar)
+
+**Pedido:** deixar a ferramenta com cara de Kepware/RSLinx Linx, mas mais
+fácil de usar — o próprio Kepware sendo considerado difícil. "Capriche no
+funcionamento".
+
+**Decisão:** em vez de copiar a interface desktop do Kepware/RSLinx (o que
+exigiria um framework de UI nativo e complicaria o "roda sozinho sem
+instalar nada"), construí um **dashboard web embutido no próprio `.exe`**
+(HTML/CSS/JS compilados no binário via `go:embed`, servidos por um
+`net/http` local) — abre sozinho no navegador padrão do Windows (Edge) ao
+rodar o `.exe`, sem instalar nada além do que o Windows já tem. Isso
+resolve o "Kepware é difícil" diretamente: assistente de "Adicionar
+dispositivo" com teste de conexão antes de salvar, assistente de
+"Adicionar tag" com teste de leitura antes de confirmar, valores das tags
+atualizando ao vivo na tela, e um botão de "Procurar PLCs na rede" —
+nenhum desses quatro o Kepware tem prontos da mesma forma.
+
+**O que foi criado/alterado:**
+- `internal/manager/` — novo: dono do ciclo de vida dos dispositivos em
+  tempo real (antes o `main.go` só lia o YAML uma vez no início e
+  cada dispositivo rodava pra sempre). Agora dá pra adicionar/remover
+  dispositivo e tag **sem reiniciar o gateway**: o manager conecta,
+  testa, salva no YAML e começa a coletar na hora.
+- `internal/config/` — `config.Save()` (grava o YAML de volta,
+  atomicamente) e `config.ValidateDevice()` (reaproveitado pelo manager).
+  Nova seção `webui:` no config (endereço/porta do dashboard,
+  `open_browser`).
+- `internal/opcuaserver/` — ganhou `AddDevice`/`AddTag` pra publicar nós
+  novos no namespace OPC UA em tempo real, acionados pelo manager sempre
+  que algo é adicionado pelo dashboard (o servidor OPC UA não fica
+  desatualizado em relação ao que aparece na tela).
+- `internal/discover/` — novo: varredura de rede (concorrente, limitada a
+  ~1000 hosts por sub-rede pra não sair escaneando uma VLAN inteira) nas
+  portas conhecidas de cada marca (44818 Rockwell/CIP, 102 Siemens, 502
+  Modbus, 5007 Mitsubishi) — é um indício de marca, não uma confirmação
+  (documentado na própria tela).
+- `internal/webui/` — novo: servidor HTTP com API REST (`/api/devices`,
+  `/api/devices/{name}/tags`, `/api/test-connection`, `/api/test-read`,
+  `/api/discover`) e streaming de valores ao vivo por Server-Sent Events
+  (`/events`), mais o dashboard em si (`internal/webui/static/`):
+  lista de dispositivos com status (bolinha verde/vermelha), painel de
+  detalhe com a tabela de tags atualizando sozinha, modais de
+  adicionar/testar dispositivo, tag e busca de rede. Tudo em português.
+- `cmd/gateway/main.go` — reescrito pra orquestrar manager + servidor OPC
+  UA + dashboard juntos, e abrir o navegador padrão automaticamente
+  (`rundll32 url.dll,FileProtocolHandler` no Windows) assim que o
+  dashboard sobe — **exceto quando rodando como Windows Service**
+  (Session 0 não tem área de trabalho pra mostrar navegador nenhum; a
+  flag é simplesmente ignorada nesse caso). Flag `-no-browser` pra quem
+  não quiser o navegador abrindo sozinho.
+
+**Limitação conhecida e documentada:** remover um dispositivo/tag pelo
+dashboard para a leitura e some da tela na hora, mas o nó OPC UA
+correspondente só desaparece de verdade num restart do gateway (a
+biblioteca `gopcua/server` não expõe remoção de nó em tempo de execução);
+enquanto isso, ele fica com qualidade "ruim" pra qualquer cliente OPC UA
+que esteja olhando.
+
+**Validação feita:** não só compilei — subi o gateway de verdade (Linux),
+apontei pra um servidor Modbus TCP fake que eu mesmo escrevi pro teste, e
+confirmei pela API o fluxo inteiro: adicionar dispositivo → testar
+conexão → adicionar tag → testar leitura → valor aparecendo ao vivo no
+streaming SSE → YAML sendo salvo automaticamente → remover tag/dispositivo
+→ YAML atualizado de volta. `go build`/`vet`/`test` limpos e
+cross-compile Windows (~12MB, ainda zero dependência) também.
+
+---
+
 ## Cobertura de marcas — estado atual
 
 | Marca | Como é coberta hoje | Observação |
@@ -119,8 +188,17 @@ Em ordem de impacto prático:
 1. **Segurança OPC UA** — hoje roda sem autenticação/criptografia
    (`MessageSecurityModeNone`); ok atrás de firewall de fábrica, mas vale
    endurecer antes de expor mais amplamente.
-2. **Escrita de tags** — hoje o gateway só lê (monitoramento). Escrever
-   valores de volta no PLC via OPC UA ainda não existe.
-3. **Driver EtherNet/IP nativo pra Omron NJ/NX** — mesma família de
+2. **Autenticação no dashboard web** — hoje qualquer um que alcance
+   `webui.bind_addr:porta` mexe nos dispositivos, sem login. Fica seguro
+   por padrão (bind em `127.0.0.1`), mas se for exposto na rede da
+   fábrica (`0.0.0.0`) merece pelo menos uma senha simples.
+3. **Escrita de tags** — hoje o gateway só lê (monitoramento). Escrever
+   valores de volta no PLC via OPC UA (ou pelo próprio dashboard) ainda
+   não existe.
+4. **Driver EtherNet/IP nativo pra Omron NJ/NX** — mesma família de
    protocolo do Rockwell (CIP), mas com particularidades próprias da Omron.
-4. **Redundância/failover** e **UI de gestão** (hoje é YAML + logs).
+5. **Remoção de nó OPC UA em tempo real** — hoje remover um dispositivo/tag
+   pelo dashboard marca a tag como qualidade ruim, mas o nó some do
+   namespace OPC UA só no próximo restart (limitação da biblioteca usada,
+   ver changelog acima).
+6. **Redundância/failover**.

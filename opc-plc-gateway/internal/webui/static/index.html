@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OPC PLC Gateway</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-dot"></span>
+    <span class="brand-name">OPC PLC Gateway</span>
+  </div>
+  <div class="topbar-actions">
+    <span id="summary" class="summary"></span>
+    <button id="btnDiscover" class="btn btn-ghost">Procurar PLCs na rede</button>
+    <button id="btnAddDevice" class="btn btn-primary">+ Adicionar dispositivo</button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="device-list" id="deviceList">
+    <p class="empty-hint">Carregando dispositivos…</p>
+  </section>
+
+  <section class="device-detail" id="deviceDetail">
+    <div class="empty-state">
+      <p>Selecione um dispositivo à esquerda para ver as tags em tempo real,</p>
+      <p>ou clique em <strong>+ Adicionar dispositivo</strong> para conectar um PLC novo.</p>
+    </div>
+  </section>
+</main>
+
+<!-- Add / edit device modal -->
+<div class="modal-backdrop" id="deviceModalBackdrop">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Adicionar dispositivo</h2>
+      <button class="btn-close" id="closeDeviceModal">&times;</button>
+    </div>
+    <div class="modal-body">
+      <label>Nome
+        <input type="text" id="fNome" placeholder="Ex: Linha3_CLP">
+      </label>
+      <label>Marca / protocolo
+        <select id="fDriver"></select>
+      </label>
+      <p class="field-help" id="fDriverHelp"></p>
+      <label>Endereço
+        <input type="text" id="fAddress" placeholder="">
+      </label>
+
+      <div class="extra-fields" id="fExtraFields"></div>
+
+      <label>Intervalo de leitura (ms)
+        <input type="number" id="fPollMs" value="1000" min="50">
+      </label>
+
+      <div class="test-row">
+        <button class="btn btn-ghost" id="btnTestConn">Testar conexão</button>
+        <span id="testConnResult" class="test-result"></span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="cancelDeviceModal">Cancelar</button>
+      <button class="btn btn-primary" id="saveDeviceBtn">Salvar e conectar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add tag modal -->
+<div class="modal-backdrop" id="tagModalBackdrop">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Adicionar tag</h2>
+      <button class="btn-close" id="closeTagModal">&times;</button>
+    </div>
+    <div class="modal-body">
+      <label>Nome da tag
+        <input type="text" id="tName" placeholder="Ex: Temperatura">
+      </label>
+      <label>Endereço
+        <input type="text" id="tAddress" placeholder="">
+      </label>
+      <p class="field-help" id="tAddressHelp"></p>
+      <label>Tipo (opcional)
+        <select id="tType">
+          <option value="">(padrão do driver)</option>
+          <option value="int16">int16</option>
+          <option value="uint16">uint16</option>
+          <option value="int32">int32</option>
+          <option value="float32">float32</option>
+          <option value="bool">bool</option>
+        </select>
+      </label>
+      <div class="test-row">
+        <button class="btn btn-ghost" id="btnTestRead">Testar leitura</button>
+        <span id="testReadResult" class="test-result"></span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="cancelTagModal">Cancelar</button>
+      <button class="btn btn-primary" id="saveTagBtn">Adicionar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Discovery modal -->
+<div class="modal-backdrop" id="discoverModalBackdrop">
+  <div class="modal modal-wide">
+    <div class="modal-header">
+      <h2>Procurar PLCs na rede</h2>
+      <button class="btn-close" id="closeDiscoverModal">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="field-help">Varredura das portas conhecidas (EtherNet/IP, S7, Modbus TCP, MC Protocol) nas redes locais desta máquina. Uma porta aberta é um indício da marca, não uma confirmação — confira antes de usar em produção.</p>
+      <div id="discoverStatus" class="test-result"></div>
+      <table class="tag-table" id="discoverTable" style="display:none">
+        <thead><tr><th>IP</th><th>Porta</th><th>Provável</th><th></th></tr></thead>
+        <tbody id="discoverBody"></tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="closeDiscoverModal2">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

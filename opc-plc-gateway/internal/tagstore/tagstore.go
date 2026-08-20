@@ -6,6 +6,7 @@ package tagstore
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -30,6 +31,13 @@ type Value struct {
 // Key builds the "<device>.<tag>" key used throughout the store.
 func Key(device, tag string) string {
 	return device + "." + tag
+}
+
+// SplitKey reverses Key. Device names are not expected to contain ".", so
+// splitting on the first occurrence recovers (device, tag) exactly.
+func SplitKey(key string) (device, tag string) {
+	device, tag, _ = strings.Cut(key, ".")
+	return device, tag
 }
 
 // Store is a concurrency-safe map of tag key -> latest Value, with an

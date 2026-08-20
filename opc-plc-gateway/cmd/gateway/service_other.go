@@ -7,8 +7,8 @@ package main
 // build target exists mainly so the codebase can be developed and tested
 // outside Windows; production deployment is Windows + Windows Service, see
 // service_windows.go).
-func runAsServiceOrForeground(configPath string) error {
+func runAsServiceOrForeground(configPath string, openBrowser bool) error {
 	ctx, cancel := signalContext()
 	defer cancel()
-	return run(ctx, configPath)
+	return run(ctx, configPath, openBrowser)
 }

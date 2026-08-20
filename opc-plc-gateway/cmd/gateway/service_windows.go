@@ -20,7 +20,7 @@ const serviceName = "OpcPlcGateway"
 // service (Start/Stop from services.msc, auto-start on boot, no console
 // window needed); otherwise (double-clicked or run from a terminal for
 // testing) it just runs the gateway in the foreground until Ctrl+C.
-func runAsServiceOrForeground(configPath string) error {
+func runAsServiceOrForeground(configPath string, openBrowser bool) error {
 	isService, err := svc.IsWindowsService()
 	if err != nil {
 		return err
@@ -28,8 +28,10 @@ func runAsServiceOrForeground(configPath string) error {
 	if !isService {
 		ctx, cancel := signalContext()
 		defer cancel()
-		return run(ctx, configPath)
+		return run(ctx, configPath, openBrowser)
 	}
+	// Running under the Service Control Manager: Session 0 has no
+	// desktop, so there is no browser to open regardless of the flag.
 	return svc.Run(serviceName, &winService{configPath: configPath})
 }
 
@@ -44,7 +46,7 @@ func (s *winService) Execute(args []string, r <-chan svc.ChangeRequest, statusCh
 	defer cancel()
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- run(ctx, s.configPath) }()
+	go func() { errCh <- run(ctx, s.configPath, false) }()
 
 	statusCh <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 
